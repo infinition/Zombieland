@@ -1,6 +1,6 @@
 # Zombieland
 
-<img width="379" height="395" alt="image" src="https://github.com/user-attachments/assets/a563fa3b-7dd5-45d6-a77f-3164480dd4a2" />
+<img width="379" height="395" alt="Sans titre" src="https://github.com/user-attachments/assets/a160cd87-1661-44f7-9e44-53f804c229d5" />
 
 ## Description
 Zombieland is a command and control (C2) server designed to manage and communicate with multiple client machines (referred to as "zombies"). Encrypted communication with clients allows for the execution of various commands and persistence on Zombies. Communication between the server and Zombie is secured using symmetric encryption with Fernet.
