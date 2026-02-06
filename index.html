@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Zombieland</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script> tailwind.config = { darkMode: 'class' } </script>
+
+  <!-- Lucide UMD -->
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.451.0/dist/umd/lucide.min.js"></script>
+
+  <style>
+    /* Hacker FX */
+    .zl-hacker .zl-halo { position:fixed; inset:0; pointer-events:none; z-index:10;
+      background:radial-gradient(60% 60% at 50% 50%, rgba(0,255,170,.08), transparent 70%);
+      mix-blend-mode:screen;}
+    .zl-hacker .zl-scan { position:fixed; inset:0; pointer-events:none; z-index:10;
+      background-image:repeating-linear-gradient(180deg, rgba(0,255,170,.08) 0px, rgba(0,255,170,.08) 1px, rgba(0,0,0,0) 3px);
+      opacity:.25;}
+
+    /* Scrollbars */
+    ::-webkit-scrollbar{width:10px;height:10px}
+    ::-webkit-scrollbar-track{background:rgba(255,255,255,.05)}
+    ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:8px}
+    ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.25)}
+
+    /* Elevation */
+    .elevate{box-shadow:0 10px 30px rgba(0,0,0,.5)}
+
+    /* Console fullscreen */
+    .console-fullscreen{position:fixed;inset:0;z-index:50;background:rgba(10,10,10,.95);backdrop-filter:blur(6px);padding:1.5rem}
+
+    /* Agent ring */
+    .ring-thick{box-shadow:0 0 0 3px rgba(16,185,129,.35)}
+
+    /* Overlay (settings/presets/split chooser) */
+    .overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-start;justify-content:flex-end}
+    .overlay .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.5)}
+    .overlay .panel{position:relative;margin:12px}
+
+    /* Small anchored dropdown */
+    .anchored{position:fixed; z-index:70}
+
+    /* ---------- Agents compact mode (auto quand panel étroit) ---------- */
+    .agents-compact .agent-actions .lbl { display:none; }
+    .agents-compact .agent-actions button { padding-left:.5rem; padding-right:.5rem; }
+    .agents-compact .agent-status { font-size:10px; padding:.125rem .25rem; }
+  </style>
+</head>
+<body class="min-h-screen bg-neutral-950 text-neutral-100 antialiased">
+  <!-- Hacker overlays (enabled via html.zl-hacker) -->
+  <div class="zl-halo hidden"></div>
+  <div class="zl-scan hidden"></div>
+
+  <!-- App root -->
+  <div id="app"></div>
+
+  <!-- Overlays mount -->
+  <div id="overlays-root"></div>
+
+  <script>
+  // ====== Utils ======
+  const loadLS = (k, fb) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{ return fb; } };
+  const saveLS = (k, v) => { try{localStorage.setItem(k, JSON.stringify(v));}catch{} };
+  const throttle = (fn, ms=500) => { let t=0; return (...a)=>{ const n=Date.now(); if(n-t>=ms){t=n; fn(...a);} }; };
+  const escHTML = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const escAttr = s => escHTML(s).replace(/"/g,'&quot;');
+
+  // ====== Data / State ======
+  const PANELS_ALL = ["stats","console","agents","logs"];
+  const OS_LIST = ["Linux","Windows","macOS"];
+  const STATUS_LIST = ["online","idle","busy","offline"];
+  const STATUS_TONE = {
+    online:  { ring:"ring-emerald-500/80", bg:"bg-emerald-500/10", border:"border-emerald-500/60" },
+    idle:    { ring:"ring-slate-300/80",   bg:"bg-slate-300/10",   border:"border-slate-300/60" },
+    busy:    { ring:"ring-amber-500/80",   bg:"bg-amber-500/10",   border:"border-amber-500/60" },
+    offline: { ring:"ring-rose-600/80",    bg:"bg-rose-600/10",    border:"border-rose-600/60" },
+  };
+  const DEFAULT_PRESETS = [
+    {label:"netstat -ano || ss -tunap", value:"netstat -ano || ss -tunap"},
+    {label:"whoami && hostname && id", value:"whoami && hostname && id"},
+    {label:"persistence (linux cron)", value:'(crontab -l; echo "@reboot /usr/bin/yourcmd") | crontab -'},
+    {label:'persistence (win schedule)', value:'SCHTASKS /Create /SC ONLOGON /TN "ZL" /TR "C:\\\\path\\\\zl.exe"'},
+  ];
+  const DEFAULT_SETTINGS = {
+    serverName:"Zombieland Master", role:"master", iconUrl:"",
+    hackerMode:false, liveDefault:false, masterPort:8080, slavePort:8081,
+    wsUrl:"", federationEnabled:false, slaves:[]
+  };
+  const MOCK_AGENTS = [
+    { id:"a1", name:"lab-client-01", os:"Linux",   status:"online", cpu:15, mem:42, ip:"10.0.1.2",  tags:["sandbox","demo"], lastSeen:184400 },
+    { id:"a2", name:"win-lab-02",    os:"Windows", status:"idle",   cpu:4,  mem:60, ip:"10.0.1.33", tags:["blue-team"],      lastSeen:184100 },
+    { id:"a3", name:"kali-red-01",   os:"Linux",   status:"busy",   cpu:67, mem:67, ip:"10.0.2.5",  tags:["purple"],         lastSeen:183900 },
+    { id:"a4", name:"osx-lab-01",    os:"macOS",   status:"online", cpu:4,  mem:15, ip:"10.0.3.9",  tags:["demo"],           lastSeen:184400 },
+    { id:"a5", name:"new-agent-01",  os:"Linux",   status:"online", cpu:9,  mem:24, ip:"10.0.4.7",  tags:["demo"],           lastSeen:94380  },
+  ];
+
+  const state = {
+    settings: { ...DEFAULT_SETTINGS, ...loadLS('zl_settings', DEFAULT_SETTINGS) },
+    presets: loadLS('zl_presets', DEFAULT_PRESETS),
+    // layoutRows: array of rows, each row is ["id"] or ["idA","idB"]
+    layoutRows: loadLS('zl_layout', null),
+    agents:  [...MOCK_AGENTS],
+    logs: [],
+
+    query:"", osFilter:"Any", statusFilter:"Any", layout:"grid",
+    selected:new Set(),
+
+    // console
+    console: { events:[], cmd:"", suggestions:[], showSuggest:false, full:false, stickBottom:true },
+
+    live:false,
+    inputFocused:false,
+  };
+  state.live = !!state.settings.liveDefault;
+  state.presets = sanitizePresets(state.presets);
+
+  if (!state.layoutRows) {
+    state.layoutRows = [["stats"],["console"],["agents"],["logs"]];
+  } else {
+    ensureAllPanelsPresent();
+  }
+
+  const app = document.getElementById('app');
+  const overlaysRoot = document.getElementById('overlays-root');
+
+  // ====== Rendering (shell) ======
+  function renderShell(){
+    const iconUrl = state.settings.iconUrl||"https://github.com/user-attachments/assets/a563fa3b-7dd5-45d6-a77f-3164480dd4a2";
+    app.innerHTML = `
+      <header class="sticky top-0 z-40 backdrop-blur bg-black/30 border-b border-white/10">
+        <div class="max-w-7xl mx-auto px-3 py-3 flex flex-wrap items-center gap-2">
+          <!-- brand -->
+          <div class="flex items-center gap-2 mr-2">
+            <div style="width:5rem;height:5rem;${state.settings.hackerMode ? 'filter: drop-shadow(0 0 8px rgba(0,255,170,0.7)) drop-shadow(0 0 18px rgba(0,255,170,0.5));' : ''}">
+  <img id="brand-icon"
+       src="https://private-user-images.githubusercontent.com/37984399/477542676-a160cd87-1661-44f7-9e44-53f804c229d5.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NTUwODg5MDQsIm5iZiI6MTc1NTA4ODYwNCwicGF0aCI6Ii8zNzk4NDM5OS80Nzc1NDI2NzYtYTE2MGNkODctMTY2MS00NGY3LTllNDQtNTNmODA0YzIyOWQ1LnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNTA4MTMlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjUwODEzVDEyMzY0NFomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPWFlODBjMzNkYjM4ODEwZDFhZjRmY2I0MmRlMjI4NTkyNzk3OTM1YWQ2YWYwMDFlZmI5YjQ2NGIyN2JhYTkyMTkmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0In0.DzYkujrHQCOmRXKTsUYNm8PdKxpO3TYuJfBBzwOgrVE"
+       alt="icon"
+       style="width:100%;height:100%;object-fit:contain;">
+</div>
+
+
+
+          <!-- search -->
+          <div class="relative flex-1 min-w-[240px] order-2 w-full sm:order-none sm:w-auto">
+            <i data-lucide="search" class="absolute left-2 top-2.5 w-4 h-4 opacity-60"></i>
+            <input id="inp-search" class="w-full pl-8 pr-24 py-2 rounded-md bg-white/5 border border-white/10 focus:border-emerald-500 outline-none"
+                   placeholder="Search by name, IP, OS…" value="${escAttr(state.query)}">
+            <div class="absolute right-2 top-1.5 flex gap-1">
+              <button id="btn-grid" class="px-2 py-1 rounded" title="Grid"><i data-lucide="grid-3x3" class="w-4 h-4"></i></button>
+              <button id="btn-list" class="px-2 py-1 rounded" title="List"><i data-lucide="list" class="w-4 h-4"></i></button>
+            </div>
+          </div>
+
+          <!-- filters + live + settings -->
+          <div class="flex items-center gap-2 ml-auto">
+            <div class="flex items-center gap-1">
+              <i data-lucide="filter" class="w-4 h-4 opacity-60"></i>
+              <select id="sel-os" class="rounded px-2 py-1 bg-black/40 text-neutral-100 border border-white/10 focus:border-emerald-500">
+                <option>Any</option>${OS_LIST.map(o=>`<option${o===state.osFilter?' selected':''}>${o}</option>`).join('')}
+              </select>
+              <select id="sel-status" class="rounded px-2 py-1 bg-black/40 text-neutral-100 border border-white/10 focus:border-emerald-500">
+                <option>Any</option>${STATUS_LIST.map(s=>`<option${s===state.statusFilter?' selected':''}>${s}</option>`).join('')}
+              </select>
+            </div>
+
+            <button id="btn-live" class="px-2 py-1 rounded border" title="Live metrics"><i data-lucide="activity" class="w-4 h-4"></i></button>
+
+            <!-- settings -->
+            <button id="btn-settings" class="px-2 py-1 rounded bg-white/5 border border-white/10"><i data-lucide="settings" class="w-4 h-4"></i></button>
+          </div>
+        </div>
+
+        <!-- selection toolbar -->
+        <div class="max-w-7xl mx-auto px-3 pb-3 flex flex-wrap items-center gap-2">
+          <button id="btn-select-all" class="px-3 py-1.5 rounded bg-emerald-600 text-white font-semibold shadow">Select all (<span id="count-filtered">0</span>)</button>
+          <button id="btn-clear" class="px-3 py-1.5 rounded bg-rose-600 text-white font-semibold shadow">Clear</button>
+          <div id="count-selected" class="text-xs opacity-70 ml-auto">0 selected</div>
+        </div>
+      </header>
+
+      <main id="main-area" class="max-w-7xl mx-auto p-3 space-y-4"></main>
+
+      <div id="toasts" class="fixed bottom-4 left-1/2 -translate-x-1/2 space-y-2 z-50"></div>
+    `;
+    lucide.createIcons();
+
+    // Bind static shell events
+    document.getElementById('btn-grid').onclick = ()=>{ state.layout='grid'; renderAgents(); refreshCounts(); updateLayoutButtons(); };
+    document.getElementById('btn-list').onclick = ()=>{ state.layout='list'; renderAgents(); refreshCounts(); updateLayoutButtons(); };
+
+    const inpSearch = document.getElementById('inp-search');
+    inpSearch.onfocus = ()=> state.inputFocused = true;
+    inpSearch.onblur  = ()=> state.inputFocused = false;
+    inpSearch.oninput = e => { state.query = e.target.value; renderAgents(); refreshCounts(); };
+
+    document.getElementById('sel-os').onchange = e => { state.osFilter=e.target.value; renderAgents(); refreshCounts(); };
+    document.getElementById('sel-status').onchange = e => { state.statusFilter=e.target.value; renderAgents(); refreshCounts(); };
+
+    document.getElementById('btn-live').onclick = ()=>{ state.live=!state.live; liveAttach(); updateLiveButton(); };
+    document.getElementById('btn-settings').onclick = openSettingsOverlay;
+
+    document.getElementById('btn-select-all').onclick = ()=>{ state.selected = new Set(getFilteredAgents().map(a=>a.id)); renderAgents(); refreshCounts(); };
+    document.getElementById('btn-clear').onclick = ()=>{ state.selected = new Set(); renderAgents(); refreshCounts(); };
+
+    // Render layout rows
+    renderMainLayout();
+    refreshCounts();
+    applyHackerFX();
+    updateLiveButton();
+    updateLayoutButtons();
+  }
+
+  function updateLayoutButtons(){
+    const g = document.getElementById('btn-grid');
+    const l = document.getElementById('btn-list');
+    if (!g || !l) return;
+    if (state.layout==='grid'){
+      g.className = "px-2 py-1 rounded bg-emerald-600";
+      l.className = "px-2 py-1 rounded bg-white/10";
+    } else {
+      g.className = "px-2 py-1 rounded bg-white/10";
+      l.className = "px-2 py-1 rounded bg-emerald-600";
+    }
+  }
+
+  // ====== Main layout with split rows ======
+  function renderMainLayout(){
+    const main = document.getElementById('main-area');
+    main.innerHTML = state.layoutRows.map((row, rIdx)=>{
+      if (row.length===2){
+        return `
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            ${row.map((pid, cIdx)=>panelShell(pid, rIdx, cIdx)).join('')}
+          </div>
+        `;
+      }
+      return panelShell(row[0], rIdx, 0);
+    }).join('');
+
+    // render each panel body
+    state.layoutRows.forEach((row, rIdx)=>{
+      row.forEach((pid, cIdx)=>{
+        if (pid==='stats')   renderStats();
+        if (pid==='console') renderConsole();
+        if (pid==='agents')  renderAgents();
+        if (pid==='logs')    renderLogs();
+        bindPanelMove(pid, rIdx);
+        bindSplitControls(pid, rIdx);
+      });
+    });
+
+    lucide.createIcons();
+  }
+
+  function panelShell(id, rowIndex){
+    const title = id==='stats'?'Stats':id==='console'?'Console':id==='agents'?'Agents':'Logs';
+    return `
+      <section class="rounded-lg border border-white/10 bg-white/5 overflow-hidden" data-panel="${id}" data-row="${rowIndex}">
+        <div class="px-3 py-2 bg-black/30 border-b border-white/10 flex items-center gap-2">
+          <div class="font-semibold">${title}</div>
+          <div class="ml-auto flex items-center gap-1">
+            <!-- Split/Unsplit -->
+            <button class="px-2 py-1 rounded bg-white/10 border border-white/10 btn-split" title="Split with…"><i data-lucide="columns" class="w-4 h-4"></i></button>
+            <button class="px-2 py-1 rounded bg-white/10 border border-white/10 btn-unsplit" title="Unsplit"><i data-lucide="square" class="w-4 h-4"></i></button>
+            <!-- Move row -->
+            <button class="px-2 py-1 rounded bg-white/10 border border-white/10 btn-up" title="Move row up"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
+            <button class="px-2 py-1 rounded bg-white/10 border border-white/10 btn-down" title="Move row down"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
+          </div>
+        </div>
+        <div class="p-3" id="panel-body-${id}"></div>
+      </section>
+    `;
+  }
+
+  function ensureAllPanelsPresent(){
+    const present = new Set(state.layoutRows.flat());
+    PANELS_ALL.forEach(id=>{
+      if (!present.has(id)) state.layoutRows.push([id]);
+    });
+    state.layoutRows = state.layoutRows.map(row=>row.filter(id=>PANELS_ALL.includes(id))).filter(row=>row.length>0);
+    saveLS('zl_layout', state.layoutRows);
+  }
+
+  function bindPanelMove(id, rowIndex){
+    const cont = document.querySelector(`[data-panel="${id}"][data-row="${rowIndex}"]`);
+    if (!cont) return;
+    const up = cont.querySelector('.btn-up');
+    const dn = cont.querySelector('.btn-down');
+    up.onclick = ()=>{
+      const i = rowIndex;
+      if (i>0){ const arr=[...state.layoutRows]; [arr[i-1],arr[i]]=[arr[i],arr[i-1]]; state.layoutRows=arr; saveLS('zl_layout',arr); renderMainLayout(); }
+    };
+    dn.onclick = ()=>{
+      const i = rowIndex;
+      if (i>=0 && i<state.layoutRows.length-1){ const arr=[...state.layoutRows]; [arr[i+1],arr[i]]=[arr[i],arr[i+1]]; state.layoutRows=arr; saveLS('zl_layout',arr); renderMainLayout(); }
+    };
+  }
+
+  function bindSplitControls(id, rowIndex){
+    const cont = document.querySelector(`[data-panel="${id}"][data-row="${rowIndex}"]`);
+    if (!cont) return;
+    const btnSplit = cont.querySelector('.btn-split');
+    const btnUnsplit = cont.querySelector('.btn-unsplit');
+
+    btnSplit.onclick = (e)=>{
+      const options = availablePanelsForSplit(id, rowIndex);
+      if (options.length===0) { pushToast('No other panels to split with.'); return; }
+      showSplitChooser(e.clientX, e.clientY, options, (chosenId)=>{
+        applySplit(rowIndex, id, chosenId);
+      });
+    };
+
+    btnUnsplit.onclick = ()=>{
+      const row = state.layoutRows[rowIndex];
+      if (row.length!==2) { pushToast('Nothing to unsplit here.'); return; }
+      const other = row.find(x=>x!==id);
+      state.layoutRows[rowIndex] = [other];
+      state.layoutRows.splice(rowIndex+1, 0, [id]);
+      saveLS('zl_layout', state.layoutRows);
+      renderMainLayout();
+    };
+  }
+
+  function availablePanelsForSplit(id, rowIndex){
+    const inThisRow = new Set(state.layoutRows[rowIndex]);
+    const flat = state.layoutRows.flat();
+    return flat.filter(pid => pid!==id && !inThisRow.has(pid));
+  }
+
+  function showSplitChooser(x, y, list, onChoose){
+    const old = document.getElementById('split-chooser');
+    if (old) old.remove();
+
+    const box = document.createElement('div');
+    box.id = 'split-chooser';
+    box.className = "anchored bg-black/85 border border-white/10 rounded p-2 elevate";
+    box.style.left = (x+8)+"px"; box.style.top = (y+8)+"px";
+    box.innerHTML = `
+      <div class="text-xs uppercase opacity-60 px-1 pb-1">Split with…</div>
+      <div class="max-h-60 overflow-auto">
+        ${list.map(pid=>`
+          <div class="px-2 py-1 rounded hover:bg-white/10 cursor-pointer" data-pid="${pid}">
+            ${pid==='stats'?'Stats':pid==='console'?'Console':pid==='agents'?'Agents':'Logs'}
+          </div>`).join('')}
+      </div>
+    `;
+    document.body.appendChild(box);
+    box.querySelectorAll('[data-pid]').forEach(el=>{
+      el.onclick = ()=>{ const pid = el.getAttribute('data-pid'); onChoose(pid); box.remove(); };
+    });
+    const onDoc = (ev)=>{ if (!box.contains(ev.target)) { box.remove(); document.removeEventListener('pointerdown', onDoc, true); } };
+    document.addEventListener('pointerdown', onDoc, true);
+  }
+
+  function applySplit(rowIndex, idA, idB){
+    for (let i=0;i<state.layoutRows.length;i++){
+      const row = state.layoutRows[i];
+      const idx = row.indexOf(idB);
+      if (idx!==-1){
+        row.splice(idx,1);
+        if (row.length===0){ state.layoutRows.splice(i,1); if (i<rowIndex) rowIndex--; }
+        break;
+      }
+    }
+    const row = state.layoutRows[rowIndex];
+    if (row.length===1){
+      row.push(idB);
+    } else {
+      row[ row[0]===idA ? 1 : 0 ] = idB;
+    }
+    saveLS('zl_layout', state.layoutRows);
+    renderMainLayout();
+  }
+
+  // ====== Stats ======
+  function renderStats(){
+    const el = document.getElementById('panel-body-stats');
+    if (!el) return;
+    const a = state.agents;
+    const avg = k => Math.round(a.reduce((s,x)=>s+x[k],0)/a.length)||0;
+    el.innerHTML = `
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+        ${[
+          {label:"Agents", value:a.length},
+          {label:"Online", value:a.filter(x=>x.status==='online').length},
+          {label:"Avg CPU", value:avg('cpu')+'%'},
+          {label:"Avg RAM", value:avg('mem')+'%'},
+        ].map(it=>`
+          <div class="p-4 rounded-lg bg-white/5 border border-white/10 flex items-center">
+            <div class="opacity-70">${it.label}</div>
+            <div class="ml-auto text-lg font-semibold">${it.value}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  // ====== Console ======
+  function renderConsole(){
+    const el = document.getElementById('panel-body-console');
+    if (!el) return;
+    const c = state.console;
+    el.innerHTML = `
+      <div id="console-wrap" class="${c.full?'console-fullscreen':''}">
+        <div class="rounded-lg border border-white/10 bg-white/5 overflow-hidden flex flex-col h-[40vh]">
+          <div class="px-3 py-2 bg-black/30 border-b border-white/10 flex items-center gap-2">
+            <div class="font-semibold">Global console</div>
+            <div class="ml-auto flex items-center gap-2">
+              <button id="btn-presets" class="px-2 py-1 rounded bg-white/10 border border-white/10">Presets</button>
+              <button id="btn-console-clear" class="px-2 py-1 rounded bg-white/10 border border-white/10">Clear</button>
+              <button id="btn-console-full" class="px-2 py-1 rounded bg-white/10 border border-white/10">
+                <i data-lucide="${c.full?'minimize-2':'maximize-2'}" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+
+          <div id="console-body" class="flex-1 overflow-auto p-3 space-y-2">
+            ${c.events.map(ev=>`
+              <div class="text-sm">
+                <span class="px-1.5 py-0.5 rounded ${ev.kind==='TX'?'bg-emerald-700/50':'bg-white/10'} mr-2">${ev.kind}</span>
+                <span class="opacity-60 mr-2">${new Date(ev.t).toLocaleTimeString()}</span>
+                <span class="opacity-80">${escHTML(ev.text)}</span>
+                ${ev.meta?.targets?`<span class="opacity-50 ml-2">→ ${escHTML(ev.meta.targets)}</span>`:''}
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="p-2 border-t border-white/10 relative">
+            <span class="absolute left-5 top-4 text-emerald-400 font-mono text-sm">zl$</span>
+            <input id="inp-cmd" value="${escAttr(c.cmd)}"
+                   placeholder="Type a command… (Tab to complete, Enter to run)"
+                   class="w-full pl-10 pr-24 py-2 font-mono rounded bg-black/40 border border-white/10 focus:border-emerald-500 outline-none">
+            <div class="absolute right-4 top-2.5 flex items-center gap-1">
+              <button id="btn-send" class="px-3 py-1.5 rounded bg-emerald-600 text-white flex items-center gap-1">
+                <i data-lucide="send" class="w-4 h-4"></i> Send
+              </button>
+            </div>
+
+            <div id="suggest-box" class="hidden absolute left-3 right-3 mt-1 max-h-56 overflow-auto bg-black/80 border border-white/10 rounded z-40 elevate"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    lucide.createIcons();
+
+    const inp = document.getElementById('inp-cmd');
+    const body = document.getElementById('console-body');
+    const sbox = document.getElementById('suggest-box');
+
+    inp.onfocus = ()=> state.inputFocused=true;
+    inp.onblur  = ()=> state.inputFocused=false;
+    inp.oninput = e => { state.console.cmd = e.target.value; buildSuggestions(); drawSuggestions(); };
+    inp.onkeydown = e => {
+      if (e.key==='Enter'){ e.preventDefault(); runCommand(); }
+      else if (e.key==='Tab' && state.console.showSuggest && state.console.suggestions.length){
+        e.preventDefault();
+        state.console.cmd = state.console.suggestions[0];
+        inp.value = state.console.cmd;
+        state.console.showSuggest=false; drawSuggestions();
+        setTimeout(()=>inp.focus(),0);
+      }
+    };
+    document.getElementById('btn-send').onclick = runCommand;
+    document.getElementById('btn-console-clear').onclick = ()=>{ state.console.events=[]; drawConsoleEvents(); };
+    document.getElementById('btn-console-full').onclick = ()=>{ state.console.full=!state.console.full; renderConsole(); };
+    document.getElementById('btn-presets').onclick = openPresetsOverlay;
+
+    if (state.console.stickBottom){ body.scrollTop = body.scrollHeight; }
+    body.onscroll = ()=>{
+      const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 20;
+      state.console.stickBottom = nearBottom;
+    };
+  }
+
+  function drawConsoleEvents(){
+    const body = document.getElementById('console-body');
+    if(!body) return;
+    body.innerHTML = state.console.events.map(ev=>`
+      <div class="text-sm">
+        <span class="px-1.5 py-0.5 rounded ${ev.kind==='TX'?'bg-emerald-700/50':'bg-white/10'} mr-2">${ev.kind}</span>
+        <span class="opacity-60 mr-2">${new Date(ev.t).toLocaleTimeString()}</span>
+        <span class="opacity-80">${escHTML(ev.text)}</span>
+        ${ev.meta?.targets?`<span class="opacity-50 ml-2">→ ${escHTML(ev.meta.targets)}</span>`:''}
+      </div>
+    `).join('');
+    if (state.console.stickBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  function buildSuggestions(){
+    const input = String(state.console.cmd||'').trim().toLowerCase();
+    if (!input){ state.console.suggestions=[]; state.console.showSuggest=false; return; }
+    const list = sanitizePresets(state.presets).map(p=>p.value).filter(v=>v.toLowerCase().includes(input)).slice(0,6);
+    const exact = list.length===1 && list[0].trim().toLowerCase()===input;
+    state.console.suggestions = exact?[]:list;
+    state.console.showSuggest = !exact && list.length>0;
+  }
+
+  function drawSuggestions(){
+    const sbox = document.getElementById('suggest-box');
+    if (!sbox) return;
+    if (!state.console.showSuggest || !state.console.suggestions.length){
+      sbox.classList.add('hidden'); sbox.innerHTML=''; return;
+    }
+    sbox.classList.remove('hidden');
+    sbox.innerHTML = state.console.suggestions.map(s=>`
+      <div class="px-3 py-2 font-mono text-sm hover:bg-white/10 cursor-pointer" data-val="${escAttr(s)}">${escHTML(s)}</div>
+    `).join('');
+    sbox.querySelectorAll('[data-val]').forEach(el=>{
+      el.onclick = ()=>{
+        state.console.cmd = el.getAttribute('data-val')||'';
+        const inp = document.getElementById('inp-cmd');
+        if (inp){ inp.value = state.console.cmd; inp.focus(); }
+        state.console.showSuggest=false; drawSuggestions();
+      };
+    });
+  }
+
+  function runCommand(){
+    const c = String(state.console.cmd||'').trim(); if(!c) return;
+    if (state.selected.size===0){ pushToast('No agents selected.'); addLog('warn','No agents selected.'); return; }
+    const targets = state.agents.filter(a=>state.selected.has(a.id)).map(a=>a.name).join(', ');
+    const stick = state.console.stickBottom;
+    state.console.events.push({ id:crypto.randomUUID(), t:Date.now(), kind:'TX', text:c, meta:{targets} });
+    drawConsoleEvents();
+    setTimeout(()=>{
+      state.console.events.push({ id:crypto.randomUUID(), t:Date.now(), kind:'RX', text:`OK: ${c.slice(0,160)}`, meta:{} });
+      drawConsoleEvents();
+      pushToast(`Command executed for ${state.selected.size} agent(s)`);
+      addLog('info', `Command executed for ${state.selected.size} agent(s): ${c}`);
+    }, 400);
+    state.console.cmd=''; const inp=document.getElementById('inp-cmd'); if(inp){ inp.value=''; inp.focus(); }
+    state.console.stickBottom = stick;
+  }
+
+  // ====== Agents ======
+  let agentsResizeObs = null;
+
+  function renderAgents(){
+    const el = document.getElementById('panel-body-agents');
+    if (!el) return;
+    const list = getFilteredAgents();
+
+    // Grille fluide basée sur la largeur du panel (pas sur la taille du viewport)
+    if (state.layout==='grid'){
+      el.innerHTML = `
+        <div class="grid gap-3 text-sm [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
+          ${list.map(a=>agentCard(a)).join('')}
+        </div>
+      `;
+      el.querySelectorAll('.agent-card').forEach(card=>{
+        card.onclick = ()=>{
+          const id = card.getAttribute('data-id'); toggleSelect(id);
+          card.classList.toggle('ring-4');
+          card.classList.toggle('ring-thick');
+        };
+        card.querySelectorAll('button[data-stop]').forEach(b=> b.onclick = e=>{ e.stopPropagation(); /* remove/logs TODO */ });
+      });
+      lucide.createIcons();
+    } else {
+      el.innerHTML = `
+        <table class="w-full rounded-lg overflow-hidden border border-white/10 text-sm">
+          <thead class="bg-white/5">
+            <tr class="[&>th]:text-left [&>th]:px-3 [&>th]:py-2">
+              <th>Name</th><th>OS</th><th>Status</th><th>CPU</th><th>RAM</th><th>IP</th><th>Tags</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map(a=>`
+              <tr data-id="${a.id}" class="cursor-pointer border-t border-white/5 ${state.selected.has(a.id)?'bg-emerald-600/20':''} [&>td]:px-3 [&>td]:py-2 row-agent">
+                <td>${escHTML(a.name)}</td>
+                <td><span class="inline-flex items-center gap-2">${osIcon(a.os)}<span>${a.os}</span></span></td>
+                <td>${a.status}</td><td>${a.cpu}%</td><td>${a.mem}%</td><td>${a.ip}</td><td>${escHTML(a.tags.join(', '))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+      el.querySelectorAll('.row-agent').forEach(r=> r.onclick = ()=>{
+        toggleSelect(r.getAttribute('data-id'));
+        r.classList.toggle('bg-emerald-600/20');
+      });
+      lucide.createIcons();
+    }
+
+    // Active/désactive le mode compact selon la largeur du panel Agents
+    applyAgentsCompact();
+    if (window.ResizeObserver){
+      if (agentsResizeObs) agentsResizeObs.disconnect();
+      agentsResizeObs = new ResizeObserver(applyAgentsCompact);
+      agentsResizeObs.observe(el);
+    }
+  }
+
+  function applyAgentsCompact(){
+    const panel = document.getElementById('panel-body-agents');
+    if (!panel) return;
+    const compact = panel.clientWidth < 700; // seuil pour le split serré
+    panel.classList.toggle('agents-compact', compact);
+  }
+
+  function agentCard(a){
+    const tone = STATUS_TONE[a.status]||STATUS_TONE.online;
+    const selected = state.selected.has(a.id);
+    return `
+      <div data-id="${a.id}" class="agent-card relative rounded-lg border p-3 cursor-pointer transition-shadow text-sm bg-white/5 ${tone.bg} ${tone.border} ${selected?`ring-4 ${tone.ring} ring-thick`:''}">
+        <div class="flex items-start gap-2">
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold truncate">${escHTML(a.name)}</div>
+            <div class="text-xs opacity-60 flex items-center gap-1 truncate">${osIcon(a.os)}<span>${a.os}</span> • <span>${a.id}</span></div>
+          </div>
+          <span class="agent-status px-2 py-0.5 rounded text-xs bg-black/20 shrink-0 whitespace-nowrap">${a.status}</span>
+        </div>
+
+        <div class="mt-2 grid grid-cols-3 gap-2 text-xs">
+          <div>CPU <span class="opacity-70">${a.cpu}%</span></div>
+          <div>RAM <span class="opacity-70">${a.mem}%</span></div>
+          <div>IP  <span class="opacity-70">${a.ip}</span></div>
+          <div class="col-span-3 truncate">Tags <span class="opacity-70">${escHTML(a.tags.join(', '))}</span></div>
+        </div>
+
+        <div class="agent-actions mt-2 flex items-center gap-2 flex-wrap">
+          <button data-stop class="px-2 py-1 rounded bg-rose-600 text-white inline-flex items-center gap-1" title="Remove">
+            <i data-lucide="trash-2" class="w-4 h-4"></i><span class="lbl">Remove</span>
+          </button>
+          <button data-stop class="px-2 py-1 rounded bg-white/10 border border-white/10 inline-flex items-center gap-1" title="Logs">
+            <i data-lucide="file-text" class="w-4 h-4"></i><span class="lbl">Logs</span>
+          </button>
+        </div>
+
+        ${selected?`<i data-lucide="check" class="absolute right-2 top-2 w-5 h-5 text-emerald-400"></i>`:''}
+      </div>
+    `;
+  }
+
+  function osIcon(os){
+    if (os==='Windows') return `<i data-lucide="monitor" class="w-4 h-4 opacity-80"></i>`;
+    if (os==='macOS')   return `<i data-lucide="apple" class="w-4 h-4 opacity-80"></i>`;
+    return `<i data-lucide="terminal" class="w-4 h-4 opacity-80"></i>`;
+  }
+
+  function toggleSelect(id){
+    const s = new Set(state.selected);
+    s.has(id)?s.delete(id):s.add(id);
+    state.selected = s;
+    refreshCounts();
+  }
+
+  function getFilteredAgents(){
+    const q = String(state.query||'').trim().toLowerCase();
+    return state.agents.filter(a=>{
+      const qok = !q || a.name.toLowerCase().includes(q) || a.ip.includes(q) || a.os.toLowerCase().includes(q);
+      const osok = state.osFilter==='Any' || a.os===state.osFilter;
+      const stok = state.statusFilter==='Any' || a.status===state.statusFilter;
+      return qok && osok && stok;
+    });
+  }
+
+  function refreshCounts(){
+    const f = getFilteredAgents();
+    const cf = document.getElementById('count-filtered'); if (cf) cf.textContent = f.length;
+    const cs = document.getElementById('count-selected'); if (cs) cs.textContent = `${state.selected.size} selected`;
+  }
+
+  // ====== Logs panel ======
+  function renderLogs(){
+    const el = document.getElementById('panel-body-logs');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="rounded-lg border border-white/10 bg-white/5 overflow-hidden flex flex-col h-[40vh]">
+        <div class="px-3 py-2 bg-black/30 border-b border-white/10 flex items-center gap-2">
+          <div class="font-semibold">Logs</div>
+          <div class="ml-auto flex items-center gap-2">
+            <button id="btn-logs-clear" class="px-2 py-1 rounded bg-white/10 border border-white/10">Clear</button>
+          </div>
+        </div>
+        <div id="logs-body" class="flex-1 overflow-auto p-3 space-y-2 text-sm"></div>
+      </div>
+    `;
+    drawLogs();
+    document.getElementById('btn-logs-clear').onclick = ()=>{ state.logs=[]; drawLogs(); };
+  }
+
+  function addLog(level, text){
+    state.logs.push({ id:Math.random().toString(36).slice(2), level, text, ts:Date.now() });
+    drawLogs();
+  }
+
+  function drawLogs(){
+    const el = document.getElementById('logs-body'); if(!el) return;
+    el.innerHTML = state.logs.slice(-500).map(n=>`
+      <div class="px-2 py-1 rounded bg-white/5 border border-white/10">
+        <span class="mr-2 text-xs opacity-60">${new Date(n.ts).toLocaleTimeString()}</span>
+        <span class="uppercase text-xs px-1 py-0.5 rounded ${n.level==='warn'?'bg-amber-600/40':'bg-emerald-700/40'}">${n.level}</span>
+        <span class="ml-2">${escHTML(n.text)}</span>
+      </div>
+    `).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // ====== Notifications → replaced by Logs + Toasts ======
+  function pushToast(text){
+    addLog('info', text);
+    const t = document.createElement('div');
+    t.className = "px-3 py-2 rounded bg-black/80 border border-white/10 text-sm";
+    t.textContent = text;
+    const holder = document.getElementById('toasts');
+    holder.appendChild(t);
+    setTimeout(()=>{ t.remove(); }, 5000);
+  }
+
+  // ====== Settings Overlay ======
+  function openSettingsOverlay(){
+    const s = state.settings;
+    const mount = document.createElement('div');
+    mount.className = 'overlay';
+    mount.innerHTML = `
+      <div class="backdrop"></div>
+      <div class="panel w-[34rem] max-w-[95vw] rounded-lg border border-white/10 bg-black/85 backdrop-blur p-3 z-50 elevate">
+        <div class="flex items-center justify-between">
+          <div class="text-sm font-semibold">Settings</div>
+          <button class="p-1 rounded hover:bg-white/10" id="set-close"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+
+        <div class="mt-3 grid grid-cols-2 gap-3 text-sm">
+          <label class="col-span-2">
+            <div class="opacity-70 mb-1">Server name</div>
+            <input id="set-servername" class="w-full px-2 py-1 rounded bg-white/5 border border-white/10" value="${escAttr(s.serverName)}">
+          </label>
+
+          <label>
+            <div class="opacity-70 mb-1">Role</div>
+            <select id="set-role" class="w-full px-2 py-1 rounded bg-black/40 text-neutral-100 border border-white/10">
+              <option${s.role==='master'?' selected':''}>master</option>
+              <option${s.role==='slave'?' selected':''}>slave</option>
+            </select>
+          </label>
+
+          <label>
+            <div class="opacity-70 mb-1">Master port</div>
+            <input id="set-mport" type="number" class="w-full px-2 py-1 rounded bg-white/5 border border-white/10" value="${Number(s.masterPort)||0}">
+          </label>
+
+          <label>
+            <div class="opacity-70 mb-1">Slave port</div>
+            <input id="set-sport" type="number" class="w-full px-2 py-1 rounded bg-white/5 border border-white/10" value="${Number(s.slavePort)||0}">
+          </label>
+
+          <label class="col-span-2">
+            <div class="opacity-70 mb-1">App icon URL (data: or https:)</div>
+            <input id="set-icon" class="w-full px-2 py-1 rounded bg-white/5 border border-white/10" value="${escAttr(s.iconUrl||'')}">
+          </label>
+
+          <label class="col-span-2">
+            <div class="opacity-70 mb-1">Events WebSocket URL (optional)</div>
+            <input id="set-ws" class="w-full px-2 py-1 rounded bg-white/5 border border-white/10" placeholder="wss://host/ws/events" value="${escAttr(s.wsUrl||'')}">
+          </label>
+
+          <label class="flex items-center gap-2">
+            <input id="set-fed" type="checkbox" ${s.federationEnabled?'checked':''}> Federation enabled
+          </label>
+
+          <label class="flex items-center gap-2">
+            <input id="set-hacker" type="checkbox" ${s.hackerMode?'checked':''}> Hacker mode
+          </label>
+
+          <label class="flex items-center gap-2">
+            <input id="set-live" type="checkbox" ${s.liveDefault?'checked':''}> Live metrics by default
+          </label>
+
+          <div class="col-span-2">
+            <div class="opacity-70 mb-1">Command presets</div>
+            <div class="space-y-2">
+              <div class="flex gap-2">
+                <input id="preset-label" class="flex-1 px-2 py-1 rounded bg-white/5 border border-white/10" placeholder="Label">
+                <input id="preset-value" class="flex-[2] px-2 py-1 rounded bg-white/5 border border-white/10 font-mono" placeholder="Command">
+                <button id="preset-add" class="px-2 rounded bg-emerald-600 text-white">Add</button>
+              </div>
+              <div id="preset-list" class="space-y-1 max-h-40 overflow-auto">
+                ${state.presets.map((p,i)=>`
+                  <div class="flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1">
+                    <div class="flex-1 truncate">${escHTML(p.label)}</div>
+                    <div class="flex-[2] truncate font-mono">${escHTML(p.value)}</div>
+                    <button class="px-2 py-0.5 rounded bg-rose-600 text-white preset-del" data-i="${i}">Delete</button>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    overlaysRoot.appendChild(mount);
+    lucide.createIcons();
+
+    mount.querySelector('.backdrop').onclick = ()=> closeOverlay(mount);
+    mount.querySelector('#set-close').onclick = ()=> closeOverlay(mount);
+
+    const sname = mount.querySelector('#set-servername');
+    sname.oninput = e=>{ state.settings.serverName = e.target.value; saveLS('zl_settings', state.settings); const t=document.getElementById('brand-title'); if(t) t.textContent = `${state.settings.serverName} — Lab Dashboard`; };
+
+    mount.querySelector('#set-role').onchange = e=>{ state.settings.role = e.target.value; saveLS('zl_settings', state.settings); };
+    mount.querySelector('#set-mport').oninput = e=>{ state.settings.masterPort = +e.target.value||0; saveLS('zl_settings', state.settings); };
+    mount.querySelector('#set-sport').oninput = e=>{ state.settings.slavePort  = +e.target.value||0; saveLS('zl_settings', state.settings); };
+
+    const iconInp = mount.querySelector('#set-icon');
+    iconInp.oninput = e=>{ state.settings.iconUrl = e.target.value; saveLS('zl_settings', state.settings); const ic=document.getElementById('brand-icon'); if (ic) ic.src = state.settings.iconUrl; };
+
+    mount.querySelector('#set-ws').oninput = e=>{ state.settings.wsUrl   = e.target.value; saveLS('zl_settings', state.settings); };
+    mount.querySelector('#set-fed').onchange = e=>{ state.settings.federationEnabled = e.target.checked; saveLS('zl_settings', state.settings); };
+    mount.querySelector('#set-hacker').onchange = e=>{ state.settings.hackerMode = e.target.checked; saveLS('zl_settings', state.settings); applyHackerFX(); };
+    mount.querySelector('#set-live').onchange = e=>{ state.settings.liveDefault = e.target.checked; saveLS('zl_settings', state.settings); state.live = !!state.settings.liveDefault; liveAttach(); updateLiveButton(); };
+
+    const listEl = mount.querySelector('#preset-list');
+    mount.querySelector('#preset-add').onclick = ()=>{
+      const l = mount.querySelector('#preset-label').value.trim();
+      const v = mount.querySelector('#preset-value').value.trim();
+      if (!v) return;
+      state.presets.push({label:l||v, value:v});
+      state.presets = sanitizePresets(state.presets);
+      saveLS('zl_presets', state.presets);
+      listEl.innerHTML = state.presets.map((p,i)=>`
+        <div class="flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1">
+          <div class="flex-1 truncate">${escHTML(p.label)}</div>
+          <div class="flex-[2] truncate font-mono">${escHTML(p.value)}</div>
+          <button class="px-2 py-0.5 rounded bg-rose-600 text-white preset-del" data-i="${i}">Delete</button>
+        </div>
+      `).join('');
+      listEl.querySelectorAll('.preset-del').forEach(btn=> btn.onclick = ()=>{
+        const i = +btn.getAttribute('data-i'); state.presets.splice(i,1); saveLS('zl_presets', state.presets);
+        btn.parentElement.remove();
+      });
+    };
+    listEl.querySelectorAll('.preset-del').forEach(btn=> btn.onclick = ()=>{
+      const i = +btn.getAttribute('data-i'); state.presets.splice(i,1); saveLS('zl_presets', state.presets);
+      btn.parentElement.remove();
+    });
+  }
+
+  function closeOverlay(node){ node.remove(); }
+
+  // ====== Presets Overlay (quick insert) ======
+  function openPresetsOverlay(){
+    const mount = document.createElement('div');
+    mount.className = 'overlay';
+    mount.innerHTML = `
+      <div class="backdrop"></div>
+      <div class="panel w-96 max-w-[95vw] rounded-lg border border-white/10 bg-black/85 backdrop-blur p-2 z-50 elevate">
+        <div class="text-xs uppercase opacity-60 px-1 pb-1">Presets</div>
+        <div id="ov-presets-list" class="max-h-60 overflow-auto">
+          ${state.presets.map(p=>`
+            <div class="p-2 hover:bg-white/10 rounded cursor-pointer" data-val="${escAttr(p.value)}">
+              <div class="font-mono text-sm">${escHTML(p.value)}</div>
+              <div class="text-xs opacity-60">${escHTML(p.label)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    overlaysRoot.appendChild(mount);
+    mount.querySelectorAll('[data-val]').forEach(el=> el.onclick = ()=>{
+      const v = el.getAttribute('data-val')||'';
+      state.console.cmd = v;
+      const inp = document.getElementById('inp-cmd'); if (inp){ inp.value = v; inp.focus(); }
+      closeOverlay(mount);
+      state.console.showSuggest=false; drawSuggestions();
+    });
+    mount.querySelector('.backdrop').onclick = ()=> closeOverlay(mount);
+  }
+
+  // ====== Live ======
+  let liveTimer=null;
+  function liveAttach(){
+    if (liveTimer){ clearInterval(liveTimer); liveTimer=null; }
+    if (!state.live) return;
+    const tick = throttle(()=>{
+      if (state.inputFocused) return;
+      state.agents = state.agents.map(a=>{
+        const j = n=>Math.max(0, Math.min(99, n + ((Math.random()*6-3)|0)));
+        return {...a, cpu:j(a.cpu), mem:j(a.mem), lastSeen:a.lastSeen+1};
+      });
+      renderStats();
+      renderAgents();
+    }, 2000);
+    liveTimer = setInterval(tick, 600);
+  }
+  function updateLiveButton(){
+    const b = document.getElementById('btn-live');
+    if (!b) return;
+    b.className = `px-2 py-1 rounded border ${state.live?'border-emerald-500 bg-emerald-600':'border-white/10 bg-white/5'}`;
+  }
+
+  // ====== Helpers ======
+  function sanitizePresets(arr){
+    const list = (Array.isArray(arr)?arr:[]).map(p=>({label:String(p?.label??'').trim(), value:String(p?.value??'').trim()})).filter(p=>p.label && p.value);
+    return list.length?list:DEFAULT_PRESETS.slice();
+  }
+  function applyHackerFX(){
+    const html=document.documentElement, halo=document.querySelector('.zl-halo'), scan=document.querySelector('.zl-scan');
+    if (state.settings.hackerMode){ html.classList.add('zl-hacker'); halo.classList.remove('hidden'); scan.classList.remove('hidden'); }
+    else { html.classList.remove('zl-hacker'); halo.classList.add('hidden'); scan.classList.add('hidden'); }
+  }
+
+  // ====== Boot ======
+  renderShell();
+  liveAttach();
+  </script>
+</body>
+</html>
