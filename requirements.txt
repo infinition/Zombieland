@@ -1,0 +1,4 @@
+flask
+cryptography
+psutil
+paramiko
