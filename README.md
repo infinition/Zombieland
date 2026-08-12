@@ -1,10 +1,12 @@
+<img width="320" height="320" alt="image-removebg-preview (2)" src="https://github.com/user-attachments/assets/3fd1bd4b-49ac-4b84-9fe1-988813167583" />
+
+
 # Zombieland
 
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black) [![Release](https://img.shields.io/github/v/release/infinition/Zombieland?style=flat)](https://github.com/infinition/Zombieland/releases) [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/infinition)
 
 A browser-based C2 dashboard frontend. Ships as a single HTML file with mock agent data and localStorage persistence so the UI can be explored and extended without a backend.
 
-![Zombieland](https://github.com/user-attachments/assets/a160cd87-1661-44f7-9e44-53f804c229d5)
 
 <img width="1117" height="1235" alt="Zombieland interface" src="https://github.com/user-attachments/assets/eb899d81-eafb-43a5-9514-8dd33b929903" />
 
