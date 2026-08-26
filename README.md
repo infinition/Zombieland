@@ -1,4 +1,6 @@
-<img width="320" height="320" alt="image-removebg-preview (2)" src="https://github.com/user-attachments/assets/3fd1bd4b-49ac-4b84-9fe1-988813167583" />
+<p align="center">
+  <img src=".github/Zombieland.png" alt="Zombieland icon" width="320" height="320" />
+</p>
 
 
 # Zombieland
